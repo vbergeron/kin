@@ -106,7 +106,7 @@ Notes on the grammar:
 - **Term position vs. type position.** A `Var` in term position (a `Term`) is a logic variable; a `Var` in type position (a `TypeTerm`) is a type parameter (§4.3). The same name MUST NOT occur in both positions within one relation.
 - **Type parameters are postfix.** A generic relation's parameters are written after its spec, introduced by `~` (`#pair ~ (A: type, B: type).`), and are usually omitted altogether because they are inferred (§4.3.2). Clause heads never carry type parameters.
 - `type` is a reserved `Ident` in `Kind` position only; `symbol` is reserved in type position (§4.6).
-- **Membership literals.** In a body, `TermCore ':' TypeTerm` is a literal of its own (`L: list(person)`, `(X, Y): closure(parent)`), not an annotated term: it is tried before `Compound`, so `parent(X, Y)` without a following `:` is still a call.
+- **Membership literals.** In a body, `TermCore ':' TypeTerm` is a literal of its own (`L: list(person)`, `(X, Y): parent`), not an annotated term: it is tried before `Compound`, so `parent(X, Y)` without a following `:` is still a call.
 
 ### 3.1 Structural equality and unification
 
@@ -200,9 +200,6 @@ pair(X: A, Y: B).                    % two parameters, explicit order
 #append(list(A), list(A), list(A)).  % A comes from the spec
 append(nil, L, L).
 append(cons(H, T), L, cons(H, R)) :- append(T, L, R).
-
-closure(X, Y) :- (X, Y): E.          % one parameter, E: type/2
-closure(X, Z) :- (X, Y): E, (Y, Z): closure(E).
 ```
 
 #### 4.3.1 Kinds
@@ -224,11 +221,11 @@ A generic relation's parameter list is **inferred**: it is the set of type param
 
 #### 4.3.3 Instantiation
 
-In type position, a generic relation MUST be applied to exactly as many type arguments as it has parameters, positionally: `list(person)`, `pair(person, nat)`, `closure(parent)`. Each argument MUST be a type of the parameter's kind — a relation of that arity, a type parameter of that kind in scope, or (for kind `type`) `symbol` or a literal type. A generic relation MUST NOT be used unapplied in type position, nor called as a predicate in a body (`list(L)` leaves `A` undetermined; write `L: list(person)`, §4.3.5). A non-generic relation is never applied in type position, so an applied `TypeTerm` is always an instantiation.
+In type position, a generic relation MUST be applied to exactly as many type arguments as it has parameters, positionally: `list(person)`, `pair(person, nat)`. Each argument MUST be a type of the parameter's kind — a relation of that arity, a type parameter of that kind in scope, or (for kind `type`) `symbol` or a literal type. A generic relation MUST NOT be used unapplied in type position, nor called as a predicate in a body (`list(L)` leaves `A` undetermined; write `L: list(person)`, §4.3.5). A non-generic relation is never applied in type position, so an applied `TypeTerm` is always an instantiation.
 
 Instantiation is **monomorphisation**: `list(person)` denotes the relation obtained by copying `list`'s spec and clauses with `A` substituted textually by `person`, and every reference to `list(A)` inside them by `list(person)`. It is never a runtime call to a higher-order relation value. Instantiation happens after desugaring (§3.2) and before every later pass: classification (§5), termination (§6) and inference (§7) see only the instances that the program actually uses, each an ordinary, non-generic relation. A generic relation is therefore checked once **per instance**; diagnostics in an instance MUST cite the location in the generic definition and the instantiation that produced it.
 
-**No polymorphic recursion.** Inside a generic relation, every instantiation of the relation itself MUST pass its own parameters unchanged (`list(A)` inside `list`, `closure(E)` inside `closure`). A self-reference with different arguments (`list(pair(A, A))` inside `list`) would make the set of instances infinite, and MUST be rejected at compile time.
+**No polymorphic recursion.** Inside a generic relation, every instantiation of the relation itself MUST pass its own parameters unchanged (`list(A)` inside `list`). A self-reference with different arguments (`list(pair(A, A))` inside `list`) would make the set of instances infinite, and MUST be rejected at compile time.
 
 #### 4.3.4 Displayed spec
 
@@ -253,7 +250,15 @@ Let `R` be a relation with spec `#R(T_1, ..., T_n).` For every clause of `R` —
 ∀i ∈ 1..n:  v_i : T_i
 ```
 
-MUST hold, checked by §4.1's arity-matching judgment applied to each `v_i` against `T_i` positionally — no field names are involved (§4.5), only position. This is not an additional mechanism — it is §4.1 applied once per head argument rather than once at an isolated annotation site. A clause that fails this check MUST be rejected at compile time, citing the argument position and the spec it violates.
+MUST hold, positionally — no field names are involved, only position. How `v_i : T_i` is decided depends on whether `v_i` is ground (§3.3):
+
+- **Ground `v_i`** (every argument of a fact, and constant arguments of a rule head): decided by membership, `member(desugar(v_i), Ext(T_i))`, exactly as in §4.1.
+- **A variable `X`**: not decided here. It is recorded as the annotation `X: T_i`, which seeds §7's inference for the clause; the clause is rejected if inference assigns `X` a different type (§7.1).
+- **An open compound `v_i`** (a compound containing variables, such as `cons(H, T)`): `v_i` MUST unify (§3.1) with the head argument of some clause of `T_i`. The annotations of that clause's head argument, and the types §7 infers for its variables, are then carried over through the unifier as annotations on `v_i`'s own variables, recursively. If no clause of `T_i` unifies, the clause is rejected.
+
+For example, with `#append(list(A), list(A), list(A))`, the head `append(cons(H, T), L, cons(H, R))` unifies `cons(H, T)` with `list`'s clause head `cons(H': A, T': list(A))`, yielding `H: A, T: list(A)`; `L` yields `L: list(A)`; and `cons(H, R)` yields `H: A, R: list(A)`. These seed §7, which then confirms them against the body `append(T, L, R)`.
+
+A clause that fails this check MUST be rejected at compile time, citing the argument position and the spec it violates.
 
 This is the rule that gives a spec its force: `#parent(person, person).` would otherwise be a declaration with no consequence, since §4.1 alone only says how to check a term *explicitly* written with a `:` annotation — it says nothing about facts or rule heads, which carry no `:` at all. §4.4 is what makes `parent(alice, bob).` (§8) actually checked, position by position, against `#parent(person, person).`, rather than merely resembling it.
 
@@ -276,6 +281,9 @@ nat(s(N)) :- nat(N).
 2. **Implicit spec.** A relation `R` of arity `n` without a written spec (or with a `~` header only) has the implicit spec `#R(π_1(R), ..., π_n(R))`, where `π_i(R)` is the projection of `Ext(R)` onto position `i`. For a unary relation, `π_1(R) = R`: an argument of `nat` has type `nat`. §7's inference uses `R.spec`, written or implicit, without a fallback branch. A projection `π_i(R)` is a type distinct from every other type for `unify_type` (§7.1); relations joined on a variable in a rule body therefore usually want written specs.
 3. **The spec, if any, MUST precede its clauses**, and MUST be unique per functor. A second `Spec` for a functor already opened elsewhere in the program — whether identical or contradictory — MUST be rejected, citing both locations. A clause whose functor's relation was already closed by another relation's clauses MUST likewise be rejected.
 4. **Arity.** `arity(R)`, used throughout §4.1's arity-matching judgment and §6's structural-decrease check, is the number of `TypeTerm` positions in `R`'s written spec, or else the head arity of its clauses. Every fact and rule head for `R` MUST have exactly that many arguments — an arity mismatch between a clause and its relation is a compile error distinct from (though checked alongside) the arity-matching judgment of §4.1, which governs an argument's *type*, not the head's *arity*.
+
+5. **Facts are ground.** A fact (`Head '.'`) MUST NOT contain a variable. Under the case convention, `person(X).` would otherwise mean "everything is a person"; it MUST be rejected at compile time.
+6. **Rules are range-restricted.** Every variable occurring in a rule's head MUST also occur in its body, as an argument of a call literal or as (part of) the term of a membership literal (§4.3.5). An occurrence inside an annotation's type does not count. `p(X) :- q(Y).` MUST be rejected at compile time, citing `X`.
 
 A relation with a written spec and zero clauses is well-formed — its extension is simply empty — and is classified per §5.1 like any other.
 
@@ -388,7 +396,9 @@ A STATIC, structurally-decreasing relation is not necessarily *finite* (`even/1`
 
 A second, independent route exists into type position for a STATIC relation that never satisfies §6.2. A relation is **Datalog-safe** if no clause in its dependency SCC (§5.1) applies a functor to construct a new compound term around a variable bound by a body literal — every argument in every head and body literal is a bare variable or an atom, copied unchanged between positions, never wrapped in a fresh `Compound`, `Tuple`, or `ListCons`.
 
-**Rule.** If `R` is Datalog-safe, and every relation in `R`'s dependency SCC is Datalog-safe, then `Ext(R)` is finite and computable by ordinary bottom-up fixpoint evaluation, independent of §6.2. `R` is usable in type position on this basis alone.
+**Rule.** If every relation in `R`'s dependency SCC is Datalog-safe, and every relation `R` depends on outside its SCC (every node reachable from it in `G`, §5.1) has a finite extension, then `Ext(R)` is finite and computable by ordinary bottom-up fixpoint evaluation, independent of §6.2. `R` is usable in type position on this basis alone.
+
+A relation has a **finite extension** when it is itself admitted by this rule, or is non-recursive with only facts. A literal type (§4.7) is finite; `symbol` (§4.6) is not, and neither is a relation admitted only by §6.2 (`nat`, `list(A)`). Without this condition, `foo(X) :- nat(X).` — Datalog-safe on its own clauses — would be wrongly declared finite; range restriction (§4.5) alone does not bound an extension, it only ties it to the body's.
 
 **Justification.** This is the standard finiteness argument for function-symbol-free Datalog: a program that never constructs compound terms has a Herbrand base bounded by the constants already present in its finite extensional facts, so semi-naive evaluation reaches a fixpoint after finitely many iterations, regardless of cycles in the dependency graph. §6.2's structural-decrease check is needed only when a relation's recursion is carried by a growing compound term (§6.3's `list(A)`, §6.4's `even/1`) — there the Herbrand base is genuinely unbounded and finiteness cannot be assumed without it.
 
@@ -436,6 +446,18 @@ unify_type(T1, T2) =
 ```
 
 A variable that is typed differently by two occurrences in the same clause body (e.g. two relations whose corresponding positions declare distinct relation names for the same variable) MUST be rejected at compile time. There is no implicit widening, no common supertype search `— the core has no type hierarchy at all`.
+
+**Consequence for relations without a spec.** An implicit spec types position `i` of `R` by the projection `π_i(R)` (§4.5), which is equal only to itself. A variable joining such a position with a position typed by another relation is therefore rejected, even when every value of one is a value of the other. The core accepts this restriction deliberately; the cure is a written spec. For example, a generic transitive closure over a relation parameter `E: type/2` is well-formed, but using it is rejected:
+
+```prolog
+closure(X, Y) :- (X, Y): E.
+closure(X, Z) :- (X, Y): E, (Y, Z): closure(E).
+
+#ancestor(person, person).
+ancestor(X, Y) :- (X, Y): closure(parent).   % rejected: π_1(closure(parent)) ≠ person
+```
+
+Lifting this — by a subset check in place of equality, or by letting a projection type unify with whatever it is joined with — is left to a later revision.
 
 ### 7.2 Explicit annotation as escape hatch
 
