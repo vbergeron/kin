@@ -1,0 +1,13 @@
+% Worked example from §8 of docs/core-spec.md.
+#person(Symbol).
+person(alice).
+person(bob).
+person(carol).
+
+#parent(person, person).
+parent(alice, bob).
+parent(bob, carol).
+
+#ancestor(person, person).
+ancestor(X, Z) :- parent(X, Z).
+ancestor(X, Z) :- parent(X, Y), ancestor(Y, Z).
