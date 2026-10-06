@@ -25,7 +25,7 @@ Term ::= TermCore (':' TypeExpr)?    -- annotation, an escape hatch, on any term
 TermCore ::= Var
            | Atom
            | Tuple(Term, ..., Term)      -- arity ≥ 2, anonymous constructor
-           | Compound(Ident, Term*)      -- named constructor, e.g. cons(H, T)
+           | Compound(Ident, Term+)      -- named constructor, e.g. cons(H, T)
            | ListNil                     -- []
            | ListCons(Term, Term)        -- [H|T], sugar for cons(H, T)
 
@@ -37,7 +37,7 @@ Kind     ::= type/n                 -- relations of arity n; `type` abbreviates 
 
 Spec     ::= '#' Ident ('(' TypeExpr+ ')')? ('~' '(' (VarName ':' Kind)+ ')')?
 
-Literal  ::= Compound(Ident, Term*)       -- a call: r(t1, ..., tn)
+Literal  ::= Compound(Ident, Term+)       -- a call: r(t1, ..., tn)
            | Member(TermCore, TypeExpr)   -- a membership test: t : T (§4.3.5)
 ```
 
@@ -62,7 +62,7 @@ TypeParam   <- Var ':' Kind
 Kind        <- 'type' ('/' Arity)?
 Arity       <- [1-9][0-9]* Spacing
 
-Head        <- Functor '(' TermList? ')'
+Head        <- Functor '(' TermList ')'
 
 Body        <- Literal (',' Literal)*
 Literal     <- TermCore ':' TypeTerm             -- membership test (§4.3.5)
@@ -80,7 +80,7 @@ TermCore    <- Compound
 TypeTerm    <- Ident ('(' TypeTerm (',' TypeTerm)* ')')?   -- relation / literal, or an instantiation
              / Var                                         -- type parameter
 
-Compound    <- Functor '(' TermList? ')'
+Compound    <- Functor '(' TermList ')'
 Tuple       <- '(' Term ',' Term (',' Term)* ')'
 
 ListTerm    <- '[' ']'
@@ -100,6 +100,7 @@ EndOfFile   <- !.
 
 Notes on the grammar:
 
+- **No empty argument lists.** `Compound` and `Head` require at least one argument: `f()` is not a term (it would be a second spelling of the atom `f`), and every relation has arity ≥ 1.
 - `Tuple` requires **arity ≥ 2** (`(X, Z)`), so that a single parenthesised term (`(X)`) is not ambiguous with a grouping parenthesis. Kin's core grammar has no grouping parenthesis for terms outside `Tuple`/`Compound`, so this ambiguity does not otherwise arise.
 - `ListTerm` is pure sugar: `[]` desugars to the atom `nil`; `[H|T]` desugars to `cons(H, T)`; `[A, B, C]` desugars to `cons(A, cons(B, cons(C, nil)))`. Desugaring MUST happen before type-checking (§4) and before the structural-decrease check (§6); neither rule has special-case knowledge of list syntax.
 - **Case is grammatical (the Prolog convention).** An uppercase- or `_`-initial name is a `Var`; a lowercase-initial name is an `Ident` — an atom, a functor, or a relation name. A relation is referred to by the same lowercase spelling everywhere: as a predicate (`person(alice).`, body literals) and as a type (`#parent(person, person).`, `X: person`). Relation-name matching is exact.
@@ -348,7 +349,7 @@ R statically computable  ⇔  classify(R) = STATIC
 
 Only a STATIC relation MAY occur in type position. A DYNAMIC relation used in type position MUST be rejected at compile time, citing the dependency edge that introduced dynamism `— the undeclared or clauseless relation reached transitively`.
 
-This is the same SCC/stratification analysis a Datalog engine already performs to order semi-naïve evaluation (§7 of the companion evaluation note); §5 reuses it for a second purpose rather than introducing a separate pass.
+This is the same SCC/stratification analysis a Datalog engine already performs to order semi-naïve evaluation; §5 reuses it for a second purpose rather than introducing a separate pass.
 
 ## 6. Termination: structural decrease criterion
 
@@ -390,7 +391,14 @@ A relation with no structurally decreasing position (e.g. one whose only recursi
 
 ### 6.4 Non-enumerative membership
 
-A STATIC, structurally-decreasing relation is not necessarily *finite* (`even/1` is an example). §5 licenses a **memoised membership query**, not full enumeration: `member(t, R)` is decided by unfolding `R`'s clauses only along the structural order fixed by §6.2, which is guaranteed to terminate by construction, with a memo table keyed on `(R, t)` to avoid recomputation (tabling, as in XSB Prolog). The compiler MUST use this algorithm rather than attempting to materialise `Ext(R)` in full whenever `R` is not finite.
+A STATIC, structurally-decreasing relation is not necessarily *finite*. For example, the even Peano numerals:
+
+```prolog
+even(z).
+even(s(s(N))) :- even(N).
+```
+
+`even` passes §6.2 (position 1: `N ⊏ s(s(N))`), yet `Ext(even)` is infinite. §5 licenses a **memoised membership query**, not full enumeration: `member(t, R)` is decided by unfolding `R`'s clauses only along the structural order fixed by §6.2, which is guaranteed to terminate by construction, with a memo table keyed on `(R, t)` to avoid recomputation (tabling, as in XSB Prolog). The compiler MUST use this algorithm rather than attempting to materialise `Ext(R)` in full whenever `R` is not finite.
 
 ### 6.5 Finite-domain (Datalog-safe) termination
 
@@ -478,6 +486,9 @@ parent(bob, carol).
 #ancestor(person, person).
 ancestor(X, Z) :- parent(X, Z).
 ancestor(X, Z) :- parent(X, Y), ancestor(Y, Z).
+
+#grandparent(person, person).
+grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
 ```
 
 **§5 classification.** `#person(symbol).` depends only on `symbol`, which contributes no node to `G` (§4.6) — `person` has no unsatisfied out-edges, so it is STATIC. `parent`'s spec (`#parent(person, person).`) names `person` in `TypeTerm` position — an edge `parent → person` per §5.1(b) — and `person` is already STATIC, so `parent` is STATIC. `ancestor`'s spec names `person` (STATIC) and its rule bodies name `parent` (STATIC) and itself → STATIC, pending §6.
@@ -488,7 +499,7 @@ This is expected: `ancestor`'s termination is not evident from its own argument 
 
 §7 inference. In the second clause of `ancestor`, `Y` is unannotated. Position 2 of the first body literal `parent(X, Y)` gives `env[Y] := person`; the second literal `ancestor(Y, Z)` re-derives `Y : person` from `ancestor`'s own spec, `#ancestor(person, person).` (§8's codeblock), applied positionally, and `unify_type(person, person) = person` — consistent, no rejection.
 
-§4 query. `(alice, carol) : grandparent` (with `grandparent` defined, elsewhere, as a STATIC, structurally-checkable relation over compound-carrying arguments) is a well-formed arity-2 judgment; `grandparent(alice, carol) : person` would be rejected outright — arity 2 against a unary relation, §4.1.
+§4 query. `grandparent` is non-recursive and depends only on `parent` and `person`, which have finite extensions, so it is STATIC and finite (§6.5). `(alice, carol) : grandparent` is a well-formed arity-2 judgment, and holds; `(alice, carol) : person` would be rejected outright — arity 2 against a unary relation, §4.1.
 
 ## 9. Implementation notes and complexity
 

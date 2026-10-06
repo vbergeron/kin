@@ -11,3 +11,6 @@ parent(bob, carol).
 #ancestor(person, person).
 ancestor(X, Z) :- parent(X, Z).
 ancestor(X, Z) :- parent(X, Y), ancestor(Y, Z).
+
+#grandparent(person, person).
+grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
