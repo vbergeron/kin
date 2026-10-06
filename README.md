@@ -5,7 +5,7 @@ checking a term against `T` means deciding membership of that term in the
 extension of the relation `T`.
 
 ```prolog
-#person(Symbol).
+#person(symbol).
 person(alice).
 person(bob).
 
