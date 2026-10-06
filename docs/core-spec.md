@@ -467,11 +467,25 @@ function bind(env, t, T):
         for i in 1..k: bind(env, t_i, T_i)
     else if t is ground:
         require member(t, Ext(T))               // decided now, §7.1
-    // an open non-tuple compound contributes its literal as a whole
+    else:                                       // open compound, e.g. cons(H, T)
+        unfold(env, t, T)
+
+function unfold(env, t, T):
+    M := the clauses of T whose head argument unifies with t (§3.1)
+    require M is non-empty                      // else unsatisfiable, §7.1
+    for each variable X of t:
+        S_c := the types bind gives X from clause c's body literals,
+               carried over through the unifier, for each c in M
+        env[X] := env[X] ∪ (S_c common to every c in M)
 
 components((T_1, ..., T_k)) = (T_1, ..., T_k)                  // anonymous relation
 components(R)               = (R.spec.param_type[1..k])        // written or implicit spec, §4.5
 ```
+
+**Open compounds.** A literal `t : T` whose `t` is a compound containing variables types those variables by unfolding `T` **one step**: the desugared clauses of `T` (after monomorphisation) whose head unifies with `t` are the only ways `t` can be a member, so their body literals, carried over through the unifier, constrain `t`'s variables. With `list(person)`'s clause `list(cons(H', T')) :- H': person, T': list(person).`, the literal `cons(H, T): list(person)` gives `H: person` and `T: list(person)`. A carried literal whose term is again an open compound is bound the same way, so the unfolding goes exactly as deep as the term written and never into `T`'s own recursion: it terminates.
+
+- If **no** clause of `T` unifies with `t` — `cons(H, T): nat`, or any non-tuple compound against `symbol`, a literal type or an anonymous relation — the literal can never hold and the clause MUST be rejected (§7.1).
+- If **several** clauses unify, `t`'s variables receive only the types every matching clause gives them. This is sound but conservative: a type that holds in some alternatives only is dropped, so some unsatisfiable clauses are not detected.
 
 ### 7.1 Static satisfiability
 
