@@ -33,9 +33,7 @@ TypeExpr ::= Ident                  -- a relation, symbol, or a literal type (§
            | Ident(TypeExpr+)       -- instantiation of a generic relation (§4.3)
            | VarName                -- a type parameter (§4.3)
 
-Kind     ::= type/n                 -- relations of arity n; `type` abbreviates type/1
-
-Spec     ::= '#' Ident ('(' TypeExpr+ ')')? ('~' '(' (VarName ':' Kind)+ ')')?
+Spec     ::= '#' Ident ('(' TypeExpr+ ')')? ('~' '(' VarName+ ')')?
 
 Literal  ::= Compound(Ident, Term+)       -- a call: r(t1, ..., tn)
            | Member(TermCore, TypeExpr)   -- a membership test: t : T (§4.3.5)
@@ -57,10 +55,7 @@ Clause      <- Spec
 Spec        <- '#' Functor SpecPositions TypeParams? '.'
              / '#' Functor TypeParams '.'
 SpecPositions <- '(' TypeTerm (',' TypeTerm)* ')'
-TypeParams  <- '~' '(' TypeParam (',' TypeParam)* ')'
-TypeParam   <- Var ':' Kind
-Kind        <- 'type' ('/' Arity)?
-Arity       <- [1-9][0-9]* Spacing
+TypeParams  <- '~' '(' Var (',' Var)* ')'
 
 Head        <- Functor '(' TermList ')'
 
@@ -105,8 +100,8 @@ Notes on the grammar:
 - `ListTerm` is pure sugar: `[]` desugars to the atom `nil`; `[H|T]` desugars to `cons(H, T)`; `[A, B, C]` desugars to `cons(A, cons(B, cons(C, nil)))`. Desugaring MUST happen before type-checking (§4) and before the structural-decrease check (§6); neither rule has special-case knowledge of list syntax.
 - **Case is grammatical (the Prolog convention).** An uppercase- or `_`-initial name is a `Var`; a lowercase-initial name is an `Ident` — an atom, a functor, or a relation name. A relation is referred to by the same lowercase spelling everywhere: as a predicate (`person(alice).`, body literals) and as a type (`#parent(person, person).`, `X: person`). Relation-name matching is exact.
 - **Term position vs. type position.** A `Var` in term position (a `Term`) is a logic variable; a `Var` in type position (a `TypeTerm`) is a type parameter (§4.3). The same name MUST NOT occur in both positions within one relation.
-- **Type parameters are postfix.** A generic relation's parameters are written after its spec, introduced by `~` (`#pair ~ (A: type, B: type).`), and are usually omitted altogether because they are inferred (§4.3.2). Clause heads never carry type parameters.
-- `type` is a reserved `Ident` in `Kind` position only; `symbol` is reserved in type position (§4.6).
+- **Type parameters are postfix.** A generic relation's parameters are written after its spec, introduced by `~` (`#pair ~ (A, B).`), and are usually omitted altogether because they are inferred (§4.3.2). Clause heads never carry type parameters.
+- **No keywords.** The only reserved name is `symbol`, in type position (§4.6).
 - **Membership literals.** In a body, `TermCore ':' TypeTerm` is a literal of its own (`L: list(person)`, `(X, Y): parent`), not an annotated term: it is tried before `Compound`, so `parent(X, Y)` without a following `:` is still a call.
 
 ### 3.1 Structural equality and unification
@@ -190,12 +185,12 @@ A **generic relation** is a relation whose clauses or spec mention one or more *
 
 ```prolog
 list(nil).
-list(cons(H: A, T: list(A))).        % one parameter, A: type
+list(cons(H: A, T: list(A))).        % one parameter, A
 
 option(none).
-option(some(X: A)).                  % one parameter, A: type
+option(some(X: A)).                  % one parameter, A
 
-#pair ~ (A: type, B: type).
+#pair ~ (A, B).
 pair(X: A, Y: B).                    % two parameters, explicit order
 
 #append(list(A), list(A), list(A)).  % A comes from the spec
@@ -203,26 +198,26 @@ append(nil, L, L).
 append(cons(H, T), L, cons(H, R)) :- append(T, L, R).
 ```
 
-#### 4.3.1 Kinds
+#### 4.3.1 Parameter arity
 
-Every type parameter has a **kind** `type/n`: it ranges over relations of arity `n`. `type` abbreviates `type/1`. `symbol` (§4.6) and literal types (§4.7) are of kind `type`. A parameter's kind is fixed by the arity of every judgment it occurs in (§4.1): `H: A` gives `A: type`, `(X, Y): E` gives `E: type/2`. Two occurrences of one parameter requiring different arities MUST be rejected at compile time, citing both.
+Every type parameter ranges over relations of one fixed arity `n`, its **arity**. It is never written: it is fixed by the arity of every judgment the parameter occurs in (§4.1) — `H: A` makes `A` unary, `(X, Y): E` makes `E` binary. `symbol` (§4.6) and literal types (§4.7) are unary. Two occurrences of one parameter requiring different arities MUST be rejected at compile time, citing both.
 
 #### 4.3.2 Inferred and explicit parameters
 
-A generic relation's parameter list is **inferred**: it is the set of type parameters occurring in its spec and clauses, each with the kind fixed by §4.3.1. The list MAY be written explicitly after the spec with `~`:
+A generic relation's parameter list is **inferred**: it is the set of type parameters occurring in its spec and clauses, each with the arity fixed by §4.3.1. The list MAY be written explicitly after the spec with `~`:
 
 ```prolog
-#pair ~ (A: type, B: type).
-#append(list(A), list(A), list(A)) ~ (A: type).
+#pair ~ (A, B).
+#append(list(A), list(A), list(A)) ~ (A).
 ```
 
 1. **Order.** Instantiation (§4.3.3) is positional, so the parameter order matters. A relation with **exactly one** parameter MAY omit `~`. A relation with **two or more** parameters MUST declare them with `~`; inferring an order from textual appearance would let reordering clauses silently change what `pair(person, nat)` means.
-2. **Agreement.** When `~` is present, it MUST list exactly the inferred parameters, with matching kinds; a missing, extra or mis-kinded parameter MUST be rejected at compile time.
+2. **Agreement.** When `~` is present, it MUST list exactly the inferred parameters; a missing or extra parameter MUST be rejected at compile time.
 3. A `~` header without positions (`#pair ~ (...)`) declares parameters only; the relation's positions are then typed as if it had no spec (§4.5).
 
 #### 4.3.3 Instantiation
 
-In type position, a generic relation MUST be applied to exactly as many type arguments as it has parameters, positionally: `list(person)`, `pair(person, nat)`. Each argument MUST be a type of the parameter's kind — a relation of that arity, a type parameter of that kind in scope, or (for kind `type`) `symbol` or a literal type. A generic relation MUST NOT be used unapplied in type position, nor called as a predicate in a body (`list(L)` leaves `A` undetermined; write `L: list(person)`, §4.3.5). A non-generic relation is never applied in type position, so an applied `TypeTerm` is always an instantiation.
+In type position, a generic relation MUST be applied to exactly as many type arguments as it has parameters, positionally: `list(person)`, `pair(person, nat)`. Each argument MUST be a type of the parameter's arity — a relation of that arity, a type parameter of that arity in scope, or (for a unary parameter) `symbol` or a literal type. A generic relation MUST NOT be used unapplied in type position, nor called as a predicate in a body (`list(L)` leaves `A` undetermined; write `L: list(person)`, §4.3.5). A non-generic relation is never applied in type position, so an applied `TypeTerm` is always an instantiation.
 
 Instantiation is **monomorphisation**: `list(person)` denotes the relation obtained by copying `list`'s spec and clauses with `A` substituted textually by `person`, and every reference to `list(A)` inside them by `list(person)`. It is never a runtime call to a higher-order relation value. Instantiation happens after desugaring (§3.2) and before every later pass: classification (§5), termination (§6) and inference (§7) see only the instances that the program actually uses, each an ordinary, non-generic relation. A generic relation is therefore checked once **per instance**; diagnostics in an instance MUST cite the location in the generic definition and the instantiation that produced it.
 
@@ -233,8 +228,8 @@ Instantiation is **monomorphisation**: `list(person)` denotes the relation obtai
 For a generic relation without a written spec, the compiler displays (in diagnostics and documentation) an **inferred spec** that joins the head shapes of its clauses with `|`, annotations replaced by their types:
 
 ```
-list   :  #list(nil | cons(A, list(A))) ~ (A: type)
-option :  #option(none | some(A)) ~ (A: type)
+list   :  #list(nil | cons(A, list(A))) ~ (A)
+option :  #option(none | some(A)) ~ (A)
 ```
 
 This form is **display-only**: `|` is not part of the grammar, and a program MUST NOT write it. A type is defined by clauses, never by a separate type expression — the design invariant of §1.
@@ -455,7 +450,7 @@ unify_type(T1, T2) =
 
 A variable that is typed differently by two occurrences in the same clause body (e.g. two relations whose corresponding positions declare distinct relation names for the same variable) MUST be rejected at compile time. There is no implicit widening, no common supertype search `— the core has no type hierarchy at all`.
 
-**Consequence for relations without a spec.** An implicit spec types position `i` of `R` by the projection `π_i(R)` (§4.5), which is equal only to itself. A variable joining such a position with a position typed by another relation is therefore rejected, even when every value of one is a value of the other. The core accepts this restriction deliberately; the cure is a written spec. For example, a generic transitive closure over a relation parameter `E: type/2` is well-formed, but using it is rejected:
+**Consequence for relations without a spec.** An implicit spec types position `i` of `R` by the projection `π_i(R)` (§4.5), which is equal only to itself. A variable joining such a position with a position typed by another relation is therefore rejected, even when every value of one is a value of the other. The core accepts this restriction deliberately; the cure is a written spec. For example, a generic transitive closure over a binary relation parameter `E` is well-formed, but using it is rejected:
 
 ```prolog
 closure(X, Y) :- (X, Y): E.
