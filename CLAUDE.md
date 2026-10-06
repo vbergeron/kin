@@ -13,7 +13,8 @@ When changing or extending the language (spec or implementation):
   reuse an existing construct (relations, terms, membership `t : T`) before
   introducing a new one.
 - **Avoid keywords.** Prefer punctuation and position over reserved words.
-  The only reserved name today is `symbol`.
+  The only reserved name is the primitive type `symbol`; it must stay the
+  only one.
 
 ## Development
 
