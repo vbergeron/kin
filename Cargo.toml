@@ -1,0 +1,23 @@
+[package]
+name = "kin"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Kin: a Datalog-style language where types are relations"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/vbergeron/kin"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "kin"
+path = "src/bin/kin.rs"
+
+[dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
