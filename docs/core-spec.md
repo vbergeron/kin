@@ -17,8 +17,8 @@ Requirements are stated with RFC 2119 keywords (MUST, MUST NOT, SHOULD, MAY).
 ### 2.1 Abstract syntax
 
 ```
-Ident    ::= lowercase-initial identifier   (atom / functor)
-VarName  ::= uppercase-initial identifier   (logic variable)
+Ident    ::= lowercase-initial identifier   (atom / functor / relation name / type name)
+VarName  ::= uppercase- or '_'-initial identifier   (logic variable / generic parameter)
 
 Term ::= TermCore (':' TypeExpr)?    -- annotation, an escape hatch, on any term
 
@@ -30,7 +30,7 @@ TermCore ::= Var
            | ListCons(Term, Term)        -- [H|T], sugar for cons(H, T)
 
 TypeExpr ::= Ident Args?            -- a relation name, optionally applied
-           | Ident                  -- unapplied generic parameter
+           | VarName                -- unapplied generic parameter
 
 Args ::= '(' Term (',' Term)* ')'
 
@@ -53,7 +53,7 @@ Clause      <- Spec
 Spec        <- '#' Functor GenericParams? '(' TypeTerm (',' TypeTerm)* ')' '.'
 
 Head        <- Functor GenericParams? '(' TermList? ')'
-GenericParams <- '(' Ident (',' Ident)* ')'
+GenericParams <- '(' Var (',' Var)* ')'
 
 Body        <- Compound (',' Compound)*
 
@@ -91,7 +91,7 @@ Notes on the grammar:
 - `Tuple` requires **arity ≥ 2** (`(X, Z)`), so that a single parenthesised term (`(X)`) is not ambiguous with a grouping parenthesis. Kin's core grammar has no grouping parenthesis for terms outside `Tuple`/`Compound`, so this ambiguity does not otherwise arise.
 - `ListTerm` is pure sugar: `[]` desugars to the atom `nil`; `[H|T]` desugars to `cons(H, T)`; `[A, B, C]` desugars to `cons(A, cons(B, cons(C, nil)))`. Desugaring MUST happen before type-checking (§4) and before the structural-decrease check (§6); neither rule has special-case knowledge of list syntax.
 - `GenericParams` is the second, separate argument list of a generic definition (`list(A)(head: A, tail: list(A))`). It is syntactically distinct from the head's `TermList` precisely so that a generic parameter is never confused with an ordinary field.
-- **Case is a convention, not a grammatical distinction, for relation names.** `Ident` matching — between a `Spec`'s functor, its facts' and rules' head functors (§4.5), and any occurrence of a relation name in `TypeTerm` position — is **case-insensitive**. By convention, authors capitalize a relation's spelling when it is referenced as a type (a `Spec`'s own functor, and any `TypeTerm` occurrence, e.g. `x: Person`, `list(A)`) and use lowercase when it is referenced as a callable predicate (fact and rule heads, body literals, e.g. `person(alice).`). `Person` and `person` denote the identical relation; this convention carries no grammatical consequence and is never required. `Var` is unaffected — it is distinguished from a case-insensitively-read `Ident` by grammatical position, not by case, since `Var` never occurs where a `TypeTerm` or a `Head`/`Compound` functor is expected.
+- **Case is grammatical (the Prolog convention).** An uppercase- or `_`-initial name is a `Var`; a lowercase-initial name is an `Ident` — an atom, a functor, or a relation name. A relation is referred to by the same lowercase spelling everywhere: as a predicate (`person(alice).`, body literals) and as a type (`#parent(person, person).`, `X: person`). Relation-name matching is exact. The one place an uppercase name occurs in a type is a generic parameter (`list(A)`), which is a `Var` bound by the enclosing `GenericParams` (§4.3).
 
 ## 3. Term semantics
 
@@ -154,12 +154,12 @@ where `left(t)` is the shape of the annotated term:
 A bare term (atom or variable, arity 1) MUST only be checked against a unary relation. A tuple of arity *k* MUST only be checked against a *k*-ary relation. There is no implicit coercion between the two.
 
 ```prolog
-X: Person                    % arity 1 — Person must be unary
-(X, Z): Grandparent          % arity 2 — Grandparent must be binary
-(X, Y, Z): SomeTernary       % arity 3
+X: person                    % arity 1 — person must be unary
+(X, Z): grandparent          % arity 2 — grandparent must be binary
+(X, Y, Z): some_ternary      % arity 3
 ```
 
-An arity mismatch (e.g. `X: Grandparent` with `Grandparent/2`) MUST be rejected at compile time.
+An arity mismatch (e.g. `X: grandparent` with `grandparent/2`) MUST be rejected at compile time.
 
 ### 4.2 Annotation inside constructed terms
 
@@ -174,7 +174,7 @@ Here `H: A` types the first field of `cons/2` against the (possibly generic) una
 
 ### 4.3 Generic instantiation
 
-A generic parameter `A` (introduced via `GenericParams`, §2.2) ranges only over relations, not over terms. At the point of instantiation (e.g. `list(Person)`), `A` MUST be substituted textually by the supplied relation before any annotation inside the body is checked — instantiation is **monomorphisation**, never a runtime call to a higher-order relation value. After substitution, every annotation reduces to an ordinary arity-1 or arity-*k* judgment per §4.1–4.2, checked against the concrete relation.
+A generic parameter `A` (introduced via `GenericParams`, §2.2) ranges only over relations, not over terms. At the point of instantiation (e.g. `list(person)`), `A` MUST be substituted textually by the supplied relation before any annotation inside the body is checked — instantiation is **monomorphisation**, never a runtime call to a higher-order relation value. After substitution, every annotation reduces to an ordinary arity-1 or arity-*k* judgment per §4.1–4.2, checked against the concrete relation.
 
 ### 4.4 Spec conformance
 
@@ -208,14 +208,14 @@ Three requirements this imposes, none of them optional:
 
 A relation whose spec is followed by zero clauses is well-formed — its extension is simply empty — and is classified per §5.1 like any other.
 
-### 4.6 Primitive type: `Symbol`
+### 4.6 Primitive type: `symbol`
 
-The core provides exactly one primitive type, `Symbol`, denoting an uninterpreted atom — the base case every relation-type eventually rests on. Unlike every other relation, `Symbol` requires no `Spec` (§4.5's mandatory-spec rule has a single, deliberate exception for it) and has no clauses: its extension is not enumerated by classify(G) — it is simply the set of all `Atom` terms (§2.1). It contributes no node to §5.1's dependency graph `G`; any edge naming it is immediately satisfied, since it depends on nothing and is STATIC by fiat, not by derivation.
+The core provides exactly one primitive type, `symbol`, denoting an uninterpreted atom — the base case every relation-type eventually rests on. Unlike every other relation, `symbol` requires no `Spec` (§4.5's mandatory-spec rule has a single, deliberate exception for it) and has no clauses: its extension is not enumerated by classify(G) — it is simply the set of all `Atom` terms (§2.1). It contributes no node to §5.1's dependency graph `G`; any edge naming it is immediately satisfied, since it depends on nothing and is STATIC by fiat, not by derivation.
 
-`Symbol` closes the circularity §8 surfaced: a base enumeration no longer needs to self-reference to have a spec.
+`symbol` closes the circularity §8 surfaced: a base enumeration no longer needs to self-reference to have a spec.
 
 ```prolog
-#person(Symbol).
+#person(symbol).
 person(alice).
 person(bob).
 person(carol).
@@ -223,22 +223,22 @@ person(carol).
 
 ### 4.7 Literal (singleton) types
 
-A particular symbol is its own type: an atom `a` used in `TypeTerm` position, once resolved as neither `Symbol` nor a relation nor a generic parameter (resolution order below), denotes the **literal type** `{a}` — the singleton set containing exactly that atom. Like `Symbol`, a literal type requires no `Spec`, contributes no node to §5.1's graph `G`, and is trivially STATIC: `member(t, {a})` holds iff `desugar(t) = a` exactly (§3.1's structural equality). This is scoped to bare atoms only — a compound term is never itself a type.
+A particular symbol is its own type: an atom `a` used in `TypeTerm` position, once resolved as neither `symbol` nor a relation nor a generic parameter (resolution order below), denotes the **literal type** `{a}` — the singleton set containing exactly that atom. Like `symbol`, a literal type requires no `Spec`, contributes no node to §5.1's graph `G`, and is trivially STATIC: `member(t, {a})` holds iff `desugar(t) = a` exactly (§3.1's structural equality). This is scoped to bare atoms only — a compound term is never itself a type.
 
 ```prolog
-#status(x: pending).
+#status(pending).
 ```
 
-A fact for `status` MUST carry the atom `pending` itself in its argument position, not merely any `Symbol`.
+A fact for `status` MUST carry the atom `pending` itself in its argument position, not merely any `symbol`.
 
-**Resolution order**, for a bare `Ident` (no arguments) occurring in `TypeTerm` position — the ambiguity `TypeTerm <- Ident (...)?` (§2.2) leaves open otherwise, since `Symbol`, a generic parameter, a declared relation and a literal atom are all syntactically just an `Ident`:
+**Resolution order**, for a bare `Ident` (no arguments) occurring in `TypeTerm` position — the ambiguity `TypeTerm <- Ident (...)?` (§2.2) leaves open otherwise, since `symbol`, a generic parameter, a declared relation and a literal atom are all syntactically just an `Ident`:
 
-1. `Symbol` (§4.6), matched case-insensitively.
+1. `symbol` (§4.6).
 2. A generic parameter bound by the enclosing `GenericParams` (§4.3), if the `TypeTerm` occurs inside that generic's own definition.
-3. A declared relation, matched case-insensitively against some `Spec` in the program (§2.2's case convention).
+3. A declared relation, matched against some `Spec` in the program.
 4. Otherwise, the literal type naming that exact atom.
 
-Each step is tried only if the previous one fails to match; the first match wins. An `Ident` applied to arguments (`list(A)`, `Grandparent(...)`) skips straight to step 3 — a literal type is never itself parameterised.
+Each step is tried only if the previous one fails to match; the first match wins. Because step 4 also catches a misspelled relation name, the compiler SHOULD warn when a literal type names an atom that occurs nowhere else in the program as a value. An `Ident` applied to arguments (`list(A)`, `grandparent(...)`) skips straight to step 3 — a literal type is never itself parameterised.
 
 ## 5. Static computability (stratification)
 
@@ -246,7 +246,7 @@ A relation MAY appear in type position (right of `:`) if and only if it is stati
 
 ### 5.1 Classification algorithm
 
-Build the relation dependency graph `G`: one node per declared relation, and an edge `R → S` whenever either (a) a clause of `R` contains a literal `S(...)` in its body, or (b) `R`'s spec (§4.5) names `S` in a `TypeTerm` position — a relation depends on every relation its own spec is typed against, not only on what its rule bodies call. `Symbol` (§4.6) is not a node of `G`; an edge naming it is trivially satisfied. Classify every node by a single bottom-up pass over `G`'s condensation (its DAG of strongly connected components, SCCs):
+Build the relation dependency graph `G`: one node per declared relation, and an edge `R → S` whenever either (a) a clause of `R` contains a literal `S(...)` in its body, or (b) `R`'s spec (§4.5) names `S` in a `TypeTerm` position — a relation depends on every relation its own spec is typed against, not only on what its rule bodies call. `symbol` (§4.6) is not a node of `G`; an edge naming it is trivially satisfied. Classify every node by a single bottom-up pass over `G`'s condensation (its DAG of strongly connected components, SCCs):
 
 ```
 function classify(G):
@@ -365,12 +365,12 @@ A variable that is typed differently by two occurrences in the same clause body 
 
 ### 7.2 Explicit annotation as escape hatch
 
-An explicit annotation always MAY be supplied (`parent(X, Y: Person)`) and is checked, not merely accepted — it participates in `unify_type` exactly like an inferred type, so a wrong explicit annotation is rejected the same way a wrong inference would be. Its only effect is to seed `env` before propagation runs, letting the author document or disambiguate.
+An explicit annotation always MAY be supplied (`parent(X, Y: person)`) and is checked, not merely accepted — it participates in `unify_type` exactly like an inferred type, so a wrong explicit annotation is rejected the same way a wrong inference would be. Its only effect is to seed `env` before propagation runs, letting the author document or disambiguate.
 
 ## 8. Worked example
 
 ```prolog
-#person(Symbol).
+#person(symbol).
 person(alice).
 person(bob).
 person(carol).
@@ -384,15 +384,15 @@ ancestor(X, Z) :- parent(X, Z).
 ancestor(X, Z) :- parent(X, Y), ancestor(Y, Z).
 ```
 
-**§5 classification.** `#person(Symbol).` depends only on `Symbol`, which contributes no node to `G` (§4.6) — `person` has no unsatisfied out-edges, so it is STATIC. `parent`'s spec (`#parent(person, person).`) names `person` in `TypeTerm` position — an edge `parent → person` per §5.1(b) — and `person` is already STATIC, so `parent` is STATIC. `ancestor`'s spec names `person` (STATIC) and its rule bodies name `parent` (STATIC) and itself → STATIC, pending §6.
+**§5 classification.** `#person(symbol).` depends only on `symbol`, which contributes no node to `G` (§4.6) — `person` has no unsatisfied out-edges, so it is STATIC. `parent`'s spec (`#parent(person, person).`) names `person` in `TypeTerm` position — an edge `parent → person` per §5.1(b) — and `person` is already STATIC, so `parent` is STATIC. `ancestor`'s spec names `person` (STATIC) and its rule bodies name `parent` (STATIC) and itself → STATIC, pending §6.
 
 §6.2 check on ancestor. Two clauses, no compound head arguments (`X`, `Z` are bare variables, not compounds) — so §6.2's requirement ("the head's term at position *p* is always a compound") is **not met by either argument position**. Under §6.2 alone, `ancestor` therefore does not pass the structural-decrease check on its own arguments — see §6.5 for why it is still admitted.
 
 This is expected: `ancestor`'s termination is not evident from its own argument shapes under §6.2, which only recognizes recursion carried by compound-term structure. `ancestor` qualifies instead under §6.5 (Datalog-safe termination): neither clause constructs a compound term, and its dependency SCC (`person`, `parent`) is extensional, so `Ext(ancestor)` is finite by ordinary bottom-up evaluation regardless of `parent`'s cycle structure. `ancestor` is therefore usable in type position on the basis of §6.5, not §6.2. A relation satisfying neither §6.2 nor §6.5 — one whose recursion both builds new compound structure and depends on the extension of another possibly-unbounded relation — MUST NOT be accepted in type position under the core rules of §4–6.
 
-§7 inference. In the second clause of `ancestor`, `Y` is unannotated. Position 2 of the first body literal `parent(X, Y)` gives `env[Y] := Person`; the second literal `ancestor(Y, Z)` re-derives `Y : Person` from `ancestor`'s own spec, `#ancestor(person, person).` (§8's codeblock), applied positionally, and `unify_type(Person, Person) = Person` — consistent, no rejection.
+§7 inference. In the second clause of `ancestor`, `Y` is unannotated. Position 2 of the first body literal `parent(X, Y)` gives `env[Y] := person`; the second literal `ancestor(Y, Z)` re-derives `Y : person` from `ancestor`'s own spec, `#ancestor(person, person).` (§8's codeblock), applied positionally, and `unify_type(person, person) = person` — consistent, no rejection.
 
-§4 query. `(Alice, Carol) : Grandparent` (with `Grandparent` defined, elsewhere, as a STATIC, structurally-checkable relation over compound-carrying arguments) is a well-formed arity-2 judgment; `Grandparent(Alice, Carol) : Person` would be rejected outright — arity 2 against a unary relation, §4.1.
+§4 query. `(alice, carol) : grandparent` (with `grandparent` defined, elsewhere, as a STATIC, structurally-checkable relation over compound-carrying arguments) is a well-formed arity-2 judgment; `grandparent(alice, carol) : person` would be rejected outright — arity 2 against a unary relation, §4.1.
 
 ## 9. Implementation notes and complexity
 

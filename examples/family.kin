@@ -1,5 +1,5 @@
 % Worked example from §8 of docs/core-spec.md.
-#person(Symbol).
+#person(symbol).
 person(alice).
 person(bob).
 person(carol).
