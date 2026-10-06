@@ -358,42 +358,61 @@ This is the same SCC/stratification analysis a Datalog engine already performs t
 
 ## 6. Termination: structural decrease criterion
 
-A STATIC relation that is recursive (its own SCC in §5.1 is non-trivial, or it calls itself directly) MUST additionally pass a structural-decrease check (§6.2, extended by tabling in §6.4) or qualify as Datalog-safe (§6.5) before it is accepted in type position. The structural-decrease check is the standard guard-by-constructor check used by `Fixpoint` in Rocq/Coq, restricted to syntactic pattern matching (no general well-founded measure, no `Function`/`measure` escape hatch — deliberately out of scope for the minimal core).
+A STATIC relation that is recursive (its own SCC in §5.1 is non-trivial, or it refers to itself directly) MUST additionally pass the structural-decrease check (§6.2, extended by tabling in §6.4) or qualify as Datalog-safe (§6.5) before it is accepted in type position. The structural-decrease check is **size-change termination** (Lee, Jones & Ben-Amram, 2001) over the subterm order: purely syntactic, decidable, and covering mutual recursion. No general well-founded measure and no user-supplied termination argument are admitted — deliberately out of scope for the minimal core.
 
 ### 6.1 Subterm order
 
-Define `t ⊏ u` (`t` is a **strict structural subterm** of `u`) as the smallest relation such that, for every compound `f(a_1, ..., a_n)` with `n ≥ 1`, each `a_i ⊏ f(a_1, ..., a_n)`, extended transitively. Tuples and list sugar are included via their desugared form (§2.2): in `cons(H, T)`, `T ⊏ cons(H, T)`. Atoms and variables have no subterms and can only occur as the smaller side of `⊏`.
+Define `t ⊏ u` (`t` is a **strict structural subterm** of `u`) as the smallest relation such that, for every compound `f(a_1, ..., a_n)` with `n ≥ 1`, each `a_i ⊏ f(a_1, ..., a_n)`, extended transitively. Tuples and list sugar are included via their desugared form (§2.2): in `cons(H, T)`, `T ⊏ cons(H, T)`. Atoms and variables have no subterms and can only occur as the smaller side of `⊏`. A tuple is the compound `tuple/n` (§3.2) and decreases like any other: `a ⊏ (a, b)`.
 
-**A bare tuple `(a, b)` used as a generic recursive argument does not, by itself, decrease** — it has no distinguished constructor to descend into unless it appears as a field of a named compound (`cons`, `nil`, or a user-defined functor). This is the open point already flagged in the main specification (list/tuple unification); §6 applies only where a named constructor is present.
+### 6.2 Check: size-change termination
 
-### 6.2 Check
+The check runs once per recursive SCC `C` of `G` (§5.1), over the desugared clauses (§3.2) of its relations.
 
-For relation `R` with clauses `R(h_1, ..., h_n) :- L_1, ..., L_m.`:
+**Size-change graphs.** Every recursive reference yields one graph. For a clause of `R ∈ C` with head `R(h_1, ..., h_n)` and a body literal `t : S` with `S ∈ C` — whose arguments `a_1, ..., a_m` are the components of `t` (`m = 1` and `a_1 = t` when `t` is not a tuple) — the graph `g : R → S` has, for each pair of positions `i` of `R` and `j` of `S`:
 
 ```
-for each clause C of R:
-    for each literal L_i = (t : R) in body(C)
-                                      (a recursive reference; L_i.arg[p] is
-                                       the p-th component of t):
-        require: ∃ position p such that
-                  head_arg[p](C) is a compound, and
-                  L_i.arg[p] ⊏ head_arg[p](C)
-    if no such p exists for some recursive L_i:
-        reject R at compile time
+an edge  i →↓ j   if  a_j ⊏ h_i            (strict decrease, §6.1)
+an edge  i →= j   if  a_j = h_i            (syntactically identical)
+no edge           otherwise
 ```
 
-In words: at least one argument position must be fixed across the whole relation, such that the head's term at that position is always a compound, and every recursive call's term at that same position is a strict structural subterm of it.
+**Composition.** For `g : R → S` and `g' : S → U`, the composite `g ; g' : R → U` has an edge `i → k` whenever `g` has `i → j` and `g'` has `j → k` for some `j`; it is labelled `↓` if either edge is `↓`, else `=`. When both labels occur for the same `i → k`, `↓` is kept.
 
-### 6.3 Worked check
+**Criterion.** Let `Cl` be the closure of all graphs of `C` under composition (finite: there are finitely many labelled graphs between the positions of `C`'s relations). `C` passes iff
+
+```
+for every g : R → R in Cl with g ; g = g:
+    g has an edge  i →↓ i  for some position i
+```
+
+**Soundness.** This is equivalent to: every infinite sequence of recursive references carries, from some point on, an argument thread that decreases strictly infinitely often (Lee, Jones & Ben-Amram). Since `⊏` is well-founded on finite terms, no such sequence exists, and unfolding the clauses of `C` along any ground membership query terminates.
+
+A relation of a recursive SCC failing the criterion, and not Datalog-safe (§6.5), MUST be rejected at compile time, citing an idempotent graph without a strict self-edge and the cycle of recursive references that produced it.
+
+### 6.3 Worked checks
+
+**Fixed position.** For `list(person)` (checked per instance, §4.3.3), the clause `list(cons(H, T)) :- H: person, T: list(person).` gives one graph, `1 →↓ 1` (`T ⊏ cons(H, T)`). It is idempotent and has a strict self-edge: `list` passes.
+
+**Alternating position.**
 
 ```prolog
-list(nil).
-list(cons(H: A, T: list(A))).
+#alt(list(symbol), list(symbol)).
+alt(nil, L).
+alt(cons(X, A), B) :- alt(B, A).
 ```
 
-Checked per instance (§4.3.3); take `list(person)`. Position 1 (the sole argument): head is `cons(H, T)` in the recursive clause; the recursive reference is the annotation `T: list(person)` (§4.3.5), i.e. a recursive literal whose argument at position 1 is `T`. Since `T ⊏ cons(H, T)`, the check passes.
+The recursive reference gives `g = {1 →↓ 2, 2 →= 1}` (`A ⊏ cons(X, A)`; `B = B`). `g` is not idempotent; `g ; g = {1 →↓ 1, 2 →↓ 2}` is, and has strict self-edges: `alt` passes, although no single position decreases in every call.
 
-A relation with no structurally decreasing position (e.g. one whose only recursive argument is a bare tuple, per §6.1, or an unguarded arithmetic decrement without a Peano encoding) and that is not Datalog-safe (§6.5) MUST be rejected — with a compile error naming the recursive literal that could not be matched to a decreasing position, not a silent non-termination risk deferred to runtime.
+**Rejected.**
+
+```prolog
+f(s(X), Y) :- f(X, s(Y)).
+f(X, s(Y)) :- f(s(X), Y).
+```
+
+The graphs are `g_1 = {1 →↓ 1}` and `g_2 = {2 →↓ 2}`. Their composite `g_1 ; g_2` has no edge at all; it is idempotent and has no strict self-edge, so `f` is rejected — correctly, since `f(s(z), s(z))` calls `f(z, s(s(z)))`, which calls `f(s(z), s(z))` again.
+
+**Mutual recursion** needs no special case: references from `R` to `S` and from `S` back to `R` in one SCC compose into graphs `R → R`, which the criterion checks like any other.
 
 ### 6.4 Non-enumerative membership
 
@@ -508,7 +527,7 @@ grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
 
 **§5 classification.** `#person(symbol).` depends only on `symbol`, which contributes no node to `G` (§4.6) — `person` has no unsatisfied out-edges, so it is STATIC. `parent`'s spec (`#parent(person, person).`) names `person` in `TypeTerm` position — an edge `parent → person` per §5.1(b) — and `person` is already STATIC, so `parent` is STATIC. `ancestor`'s spec names `person` (STATIC) and its rule bodies name `parent` (STATIC) and itself → STATIC, pending §6.
 
-§6.2 check on ancestor. Two clauses, no compound head arguments (`X`, `Z` are bare variables, not compounds) — so §6.2's requirement ("the head's term at position *p* is always a compound") is **not met by either argument position**. Under §6.2 alone, `ancestor` therefore does not pass the structural-decrease check on its own arguments — see §6.5 for why it is still admitted.
+§6.2 check on ancestor. The recursive reference `ancestor(Y, Z)` in the second clause has `Y`, which is neither a subterm of nor identical to any head argument, and `Z = Z`: its size-change graph is `{2 →= 2}`, idempotent and without a strict self-edge. `ancestor` therefore does not pass §6.2 — see §6.5 for why it is still admitted.
 
 This is expected: `ancestor`'s termination is not evident from its own argument shapes under §6.2, which only recognizes recursion carried by compound-term structure. `ancestor` qualifies instead under §6.5 (Datalog-safe termination): neither clause constructs a compound term, and its dependency SCC (`person`, `parent`) is extensional, so `Ext(ancestor)` is finite by ordinary bottom-up evaluation regardless of `parent`'s cycle structure. `ancestor` is therefore usable in type position on the basis of §6.5, not §6.2. A relation satisfying neither §6.2 nor §6.5 — one whose recursion both builds new compound structure and depends on the extension of another possibly-unbounded relation — MUST NOT be accepted in type position under the core rules of §4–6.
 
@@ -520,7 +539,7 @@ This is expected: `ancestor`'s termination is not evident from its own argument 
 
 §5 (classification). Tarjan's SCC algorithm on the dependency graph, `O(V + E)` in the number of relations and clause-body literal references. Run once per compilation unit; re-run incrementally is possible but out of scope here.
 
-§6 (structural check and Datalog-safety check). §6.2: for each recursive clause, `O(k)` per literal where `k` is the clause's arity, to test `⊏` at each candidate position; `O(clauses × arity)` overall per relation. §6.5: comparable cost, `O(clauses × arity)`, to check that no clause constructs a compound term. Both checks are purely syntactic (no unification with runtime data), so both are cheap. Per §6.3/§8's worked examples, a relation may pass either, both, or neither: `list(A)` passes §6.2 only, `ancestor` passes §6.5 only, and a relation satisfying neither remains excluded — correctly so, since the general case (an arbitrary semantic termination proof) is undecidable and out of scope for the minimal core.
+§6 (structural check and Datalog-safety check). §6.2: building the size-change graphs is `O(k²)` per recursive reference, `k` the arity; the closure is exponential in the worst case in the total arity of the SCC (size-change termination is PSPACE-complete), but SCCs and arities are small in practice and the closure is computed once per SCC. §6.5: comparable cost, `O(clauses × arity)`, to check that no clause constructs a compound term. Both checks are purely syntactic (no unification with runtime data), so both are cheap. Per §6.3/§8's worked examples, a relation may pass either, both, or neither: `list(A)` passes §6.2 only, `ancestor` passes §6.5 only, and a relation satisfying neither remains excluded — correctly so, since the general case (an arbitrary semantic termination proof) is undecidable and out of scope for the minimal core.
 
 **§6.4 (memoised membership).** Standard tabling: a hash map keyed on `(relation, term)` with three states (unknown / in-progress / resolved), to also detect and reject a membership query that recurses into itself without progress (which §6's static check should already have excluded, but which tabling MUST still guard against defensively, e.g. against a bug in the checker itself).
 
